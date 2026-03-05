@@ -68,7 +68,7 @@ class GPSController:
 	def get_time(self):
 		data = self.gnss.getRMC()
 		if data and data[1]:
-			return (int(data[1][0:2]), int(data[1][2:4]), int('20' + data[1][4:6]))
+			return (int(data[1][0:2]), int(data[1][2:4]), int(data[1][4:6]))
 		else:
 			return None
 
