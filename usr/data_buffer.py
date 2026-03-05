@@ -1,4 +1,3 @@
-import ujson
 import gc
 
 
@@ -16,9 +15,9 @@ class DataBuffer:
 			return True
 		return False
 
-	def get_all(self):
-		"""Get all buffered data"""
-		return self.buffer.copy()
+	def get_points(self):
+		for i in range(len(self.buffer)):
+			yield self.buffer[i]
 
 	def clear(self):
 		"""Clear buffer"""

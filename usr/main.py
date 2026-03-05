@@ -23,6 +23,10 @@ from usr.http_protocol import HTTPProtocol
 GNSS_PORT = UART.UART2
 GNSS_PIN = Pin.GPIO10
 
+LED_RED = Pin.GPIO15
+LED_BLUE = Pin.GPIO16
+LED_YELLOW = Pin.GPIO17
+
 
 class GPSTracker:
 	"""Main GPS Tracker class"""
@@ -30,7 +34,7 @@ class GPSTracker:
 	def __init__(self):
 		print('Initializing GPS Tracker...')
 		self.config = Config()
-		self.leds = Leds(red_pin=15, blue_pin=16, yellow_pin=17)
+		self.leds = Leds(red_pin=LED_RED, blue_pin=LED_BLUE, yellow_pin=LED_YELLOW)
 		self.leds.set_battery_status(Led.MODE_ON)
 		self.battery = BatteryMonitor()
 		self.gps = GPSController(GNSS_PORT, GNSS_PIN)
@@ -208,12 +212,8 @@ class GPSTracker:
 	def _send_buffered_data(self):
 		"""Send buffered data"""
 		try:
-			buffered = self.data_buffer.get_all()
-			if not buffered:
-				return
-			print('Sending buffered data, count:', len(buffered))
 			sent_count = 0
-			for data in buffered:
+			for data in self.data_buffer.get_points():
 				self.leds.network_data_start()
 				success = self.protocol.send_location(data)
 				self.leds.network_data_stop()
