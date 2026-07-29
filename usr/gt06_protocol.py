@@ -1,6 +1,7 @@
 import usocket
 import ustruct
 import utime
+import ubinascii
 import modem
 from usr.led_controller import Led
 
@@ -23,7 +24,6 @@ class GT06Protocol:
 		self.serial_number = 1
 		self.imei = modem.getDevImei()
 		print('GT06 protocol initialized: {}:{}, IMEI: {}'.format(host, port, self.imei))
-		self.connect()
 
 	def connect(self):
 		"""Connect to server"""
@@ -34,22 +34,27 @@ class GT06Protocol:
 				except:
 					pass
 			self.leds.set_network_status(Led.MODE_BLINK_CONNECT)
-			print('Connecting to {}:{}'.format(self.host, self.port))
+			print('[GT06] Connecting to {}:{}'.format(self.host, self.port))
+			print('[GT06] Creating socket...')
 			self.socket = usocket.socket(usocket.AF_INET, usocket.SOCK_STREAM)
 			self.socket.settimeout(10)
+			print('[GT06] Resolving {}...'.format(self.host))
 			addr = usocket.getaddrinfo(self.host, self.port)[0][-1]
+			print('[GT06] Resolved to {}, connecting...'.format(addr))
 			self.socket.connect(addr)
+			print('[GT06] TCP connected')
 			if self._send_login():
 				self.connected = True
 				self.leds.set_network_status(Led.MODE_PULSE)
-				print('Connected to server')
+				print('[GT06] Connected')
 				return True
 			else:
 				self.connected = False
 				self.leds.set_network_status(Led.MODE_OFF)
+				print('[GT06] Login failed')
 				return False
 		except Exception as e:
-			print('Connection error:', e)
+			print('[GT06] Connection error:', e)
 			self.connected = False
 			self.leds.set_network_status(Led.MODE_OFF)
 			return False
@@ -68,12 +73,13 @@ class GT06Protocol:
 	def _send_login(self):
 		"""Send login packet with IMEI"""
 		try:
-			imei_hex = self.imei[-16:] if len(self.imei) >= 16 else self.imei.zfill(16)
-			imei_bytes = bytes.fromhex(imei_hex)
+			imei_hex = self.imei if len(self.imei) >= 16 else ('0' * (16 - len(self.imei)) + self.imei)
+			imei_bytes = ubinascii.unhexlify(imei_hex)
+			print('[GT06] Login: IMEI={} hex={} bytes={}'.format(self.imei, imei_hex, len(imei_bytes)))
 			packet = bytearray()
 			packet.append(0x78)
 			packet.append(0x78)
-			packet.append(0x0A)
+			packet.append(len(imei_bytes) + 5)
 			packet.append(self.LOGIN)
 			packet.extend(imei_bytes)
 			serial = ustruct.pack('>H', self.serial_number)
@@ -82,16 +88,19 @@ class GT06Protocol:
 			packet.extend(ustruct.pack('>H', crc))
 			packet.append(0x0D)
 			packet.append(0x0A)
+			print('[GT06] Login packet: {} bytes, sending...'.format(len(packet)))
 			self.socket.send(packet)
 			self.serial_number = (self.serial_number + 1) % 0xFFFF
+			print('[GT06] Waiting for login response...')
 			response = self.socket.recv(128)
+			print('[GT06] Login response: {} bytes'.format(len(response) if response else 0))
 			if response and len(response) > 4:
-				print('Login successful')
+				print('[GT06] Login successful')
 				return True
-			print('Login failed: no response')
+			print('[GT06] Login failed: no valid response')
 			return False
 		except Exception as e:
-			print('Login error:', e)
+			print('[GT06] Login error:', e)
 			return False
 
 	def send_location(self, data):
@@ -172,7 +181,7 @@ class GT06Protocol:
 			wifi_data = bytearray()
 			wifi_data.append(wifi_count)
 			for wifi in wifi_networks[:wifi_count]:
-				mac_bytes = bytes.fromhex(wifi['mac'].replace(':', ''))
+				mac_bytes = ubinascii.unhexlify(wifi['mac'].replace(':', ''))
 				wifi_data.extend(mac_bytes)
 				wifi_data.append(abs(wifi['signal']) & 0xFF)
 			time_tuple = utime.localtime(data['timestamp'])

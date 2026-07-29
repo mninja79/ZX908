@@ -14,16 +14,17 @@ class GPSController:
 		self.enabled = False
 		self.last_sync_time = 0
 		self.lock = _thread.allocate_lock()
+		self.last_fix_state = False
 
 	def enable(self):
 		"""Enable GPS module"""
 		try:
 			self.power_pin.write(1)
 			self.enabled = True
-			print('GPS enabled')
+			print('[GPS] Enabled')
 			return True
 		except Exception as e:
-			print('GPS enable error:', e)
+			print('[GPS] Enable error:', e)
 			return False
 
 	def disable(self):
@@ -31,14 +32,18 @@ class GPSController:
 		try:
 			self.power_pin.write(0)
 			self.enabled = False
-			print('GPS disabled')
+			self.last_fix_state = False
+			print('[GPS] Disabled')
 		except Exception as e:
-			print('GPS disable error:', e)
+			print('[GPS] Disable error:', e)
 
 	def is_valid(self):
 		"""Check if GPS has valid fix"""
-		# TODO: Add last update time check!
-		return self.enabled and self.isFix()
+		fix = self.enabled and self.isFix()
+		if fix != self.last_fix_state:
+			self.last_fix_state = fix
+			print('[GPS] Fix {}'.format('acquired' if fix else 'lost'))
+		return fix
 
 	def get_course(self):
 		rmc_data = self.gnss.getRMC()
@@ -120,20 +125,25 @@ class GPSController:
 				return {'valid': False}
 
 			lat, lat_dir, lon, lon_dir = self.gnss.getLocation()
+			sats = self.gnss.getUsedSateCnt()
+			alt = self.gnss.getAltitude()
+			spd = self.gnss.getSpeed()
+			print('[GPS] Fix: {:.6f} {}, {:.6f} {} | sats={} alt={:.1f}m speed={:.1f}km/h'.format(
+				lat, lat_dir, lon, lon_dir, sats, alt, spd))
 			return {
 				'valid': True,
 				'latitude': lat,
 				'longitude': lon,
-				'altitude': self.gnss.getAltitude(),
-				'speed': self.gnss.getSpeed(),
+				'altitude': alt,
+				'speed': spd,
 				'course': self.get_course(),
-				'satellites': self.gnss.getUsedSateCnt(),
+				'satellites': sats,
 				'source': 'gps',
 				'accuracy': self.get_accuracy(),
 				'timestamp': utime.time()
 			}
 		except Exception as e:
-			print('Get location error:', e)
+			print('[GPS] Get location error:', e)
 			return {'valid': False}
 
 	def sync_rtc(self, force=False):

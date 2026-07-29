@@ -46,6 +46,7 @@ class HTTPProtocol:
 			sock = usocket.socket(usocket.AF_INET, usocket.SOCK_STREAM)
 			sock.settimeout(10)
 			addr = usocket.getaddrinfo(self.host, self.port)[0][-1]
+			print('[HTTP] POST {} @ {}:{} ({} bytes)'.format(self.path, self.host, self.port, len(json_str)))
 			sock.connect(addr)
 			sock.send(request.encode())
 			response = b''
@@ -60,17 +61,17 @@ class HTTPProtocol:
 			if response:
 				response_str = response.decode('utf-8', 'ignore')
 				if '200 OK' in response_str or '201' in response_str or '204' in response_str:
-					print('HTTP: Data sent successfully')
+					print('[HTTP] POST OK')
 					self.connected = True
 					self.leds.set_network_status(Led.MODE_PULSE)
 					return True
 				else:
-					print('HTTP: Server returned error:', response_str.split('\r\n')[0])
+					print('[HTTP] Server error:', response_str.split('\r\n')[0])
 			self.connected = False
 			self.leds.set_network_status(Led.MODE_OFF)
 			return False
 		except Exception as e:
-			print('HTTP send error:', e)
+			print('[HTTP] Send error:', e)
 			self.connected = False
 			self.leds.set_network_status(Led.MODE_OFF)
 			return False

@@ -1,7 +1,13 @@
-import sms
 import utime
 import modem
 from usr.config import Config
+
+try:
+	import sms
+	SMS_AVAILABLE = True
+except ImportError:
+	SMS_AVAILABLE = False
+	print('[SMS] Module not available in this firmware')
 
 
 class SMSHandler:
@@ -15,6 +21,9 @@ class SMSHandler:
 
 	def init_sms(self):
 		"""Initialize SMS handler"""
+		if not SMS_AVAILABLE:
+			print('[SMS] Handler disabled (module unavailable)')
+			return
 		try:
 			sms.setCallback(self._sms_callback)
 			print('SMS handler initialized, IMEI:', self.imei)
@@ -23,6 +32,8 @@ class SMSHandler:
 
 	def _sms_callback(self, args):
 		"""Callback on SMS received"""
+		if not SMS_AVAILABLE:
+			return
 		try:
 			if args[0] == 1:
 				print('SMS received, index:', args[2])
@@ -88,6 +99,8 @@ class SMSHandler:
 
 	def _send_sms(self, phone, text):
 		"""Send SMS response"""
+		if not SMS_AVAILABLE:
+			return
 		try:
 			ret = sms.sendTextMsg(phone, text, 'GSM')
 			if ret >= 0:

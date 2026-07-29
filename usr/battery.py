@@ -13,18 +13,28 @@ class BatteryMonitor:
 		self.voltage = 0.0
 		self.percentage = 0
 		self.is_charging = False
+		self.last_logged_pct = -1
+		self.last_logged_charging = False
 		self.usb = USB()
 		self.update()
 
 	def update(self):
 		"""Update battery status"""
 		try:
+			old_pct = self.percentage
+			old_chg = self.is_charging
 			self.voltage = Power.getVbatt() / 1000.0
 			self.percentage = self._voltage_to_percentage(self.voltage)
 			usb_status = self.usb.getStatus()
 			self.is_charging = (usb_status == 1)
+			if self.percentage != self.last_logged_pct or self.is_charging != self.last_logged_charging:
+				self.last_logged_pct = self.percentage
+				self.last_logged_charging = self.is_charging
+				print('[BAT] {}% @ {:.3f}V {}'.format(
+					self.percentage, self.voltage,
+					'CHARGING' if self.is_charging else 'discharging'))
 		except Exception as e:
-			print('Battery update error:', e)
+			print('[BAT] Update error:', e)
 
 	def _voltage_to_percentage(self, voltage):
 		"""Convert voltage to percentage using interpolation"""

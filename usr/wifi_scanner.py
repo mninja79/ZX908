@@ -60,6 +60,8 @@ class WiFiScanner:
 		except Exception as e:
 			print('WiFi scan error:', e)
 			return []
+		finally:
+			self.disable()
 
 	def _scan_callback(self, data):
 		"""Callback for WiFi scan results"""
@@ -69,6 +71,7 @@ class WiFiScanner:
 				wifi_list = []
 				for ap_info in aps:
 					mac_addr, rssi = ap_info
+					mac_addr = mac_addr.replace('-', ':').replace(' ', ':').replace('.', ':').lower()
 					wifi_list.append({'mac': mac_addr, 'signal': rssi})
 					print('WiFi AP: MAC={}, RSSI={}dB'.format(mac_addr, rssi))
 				self.scan_result = wifi_list
