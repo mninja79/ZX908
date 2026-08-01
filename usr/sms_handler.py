@@ -26,6 +26,13 @@ class SMSHandler:
 			return
 		try:
 			sms.setCallback(self._sms_callback)
+			# Enable SMS module - some firmwares need control(1) or start()
+			if hasattr(sms, 'control'):
+				sms.control(1)
+				print('[SMS] Module enabled via control(1)')
+			if hasattr(sms, 'start'):
+				sms.start()
+				print('[SMS] Module started via start()')
 			print('SMS handler initialized, IMEI:', self.imei)
 		except Exception as e:
 			print('SMS init error:', e)
@@ -35,14 +42,25 @@ class SMSHandler:
 		if not SMS_AVAILABLE:
 			return
 		try:
-			if args[0] == 1:
-				print('SMS received, index:', args[2])
-				msg = sms.searchTextMsg(args[2])
+			print('[SMS] RAW callback args:', args)
+			# Handle different callback signatures: (event, index) or (event, _, index) or just (index,)
+			msg_idx = None
+			if len(args) >= 3 and args[0] == 1:
+				msg_idx = args[2]  # standard: (1, _, index)
+			elif len(args) >= 2 and args[0] == 1:
+				msg_idx = args[1]  # variant: (1, index)
+			elif len(args) >= 1:
+				msg_idx = args[0]  # fallback: just index
+			if msg_idx is not None:
+				print('SMS received, index:', msg_idx)
+				msg = sms.searchTextMsg(msg_idx)
 				if msg != -1:
 					phone, text, timestamp = msg
 					print('From:', phone, 'Text:', text)
-					sms.deleteMsg(args[2])
+					sms.deleteMsg(msg_idx)
 					self._process_command(phone, text)
+				else:
+					print('[SMS] Failed to read message at index', msg_idx)
 		except Exception as e:
 			print('SMS callback error:', e)
 
@@ -74,6 +92,8 @@ class SMSHandler:
 				self._cmd_interval(phone, params)
 			elif command == 'SLEEP':
 				self._cmd_sleep(phone, params)
+			elif command == 'ACCEL':
+				self._cmd_accel(phone, params)
 			elif command == 'STATUS':
 				self._cmd_status(phone, params)
 			elif command == 'POWEROFF':
@@ -267,6 +287,25 @@ class SMSHandler:
 			timeout = self.config.get('sleep_timeout', 1800)
 			minutes = timeout // 60
 			self._send_sms(phone, 'Sleep timeout: {}min'.format(minutes))
+
+	def _cmd_accel(self, phone, params):
+		"""Enable/disable accelerometer - ACCEL,1/0"""
+		if len(params) >= 1:
+			try:
+				enable = int(params[0])
+				if enable not in (0, 1):
+					self._send_sms(phone, 'Invalid value (0 or 1)')
+					return
+				self.config.update(accelerometer_enabled=(enable == 1))
+				status = 'enabled' if enable == 1 else 'disabled'
+				self._send_sms(phone, 'Accelerometer ' + status)
+				print('Accelerometer:', status)
+			except ValueError:
+				self._send_sms(phone, 'Invalid value (0 or 1)')
+		else:
+			enabled = self.config.get('accelerometer_enabled', False)
+			status = 'enabled' if enabled else 'disabled'
+			self._send_sms(phone, 'Accelerometer: ' + status)
 
 	def _cmd_status(self, phone, params):
 		"""Get device status - STATUS"""

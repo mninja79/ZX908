@@ -4,6 +4,8 @@
 
 ### This code contains many errors and still in development state!
 
+### WIP: SMS implementation not tested
+
 ## Features
 
 ### Core Features
@@ -12,7 +14,7 @@
 -   ✅ WiFi-based location fallback
 -   ✅ Automatic sleep mode on inactivity
 -   ✅ Battery monitoring with accurate percentage calculation
--   ✅ SMS command configuration
+-   ✅ SMS command configuration (⚠️ WIP - not tested)
 -   ✅ Voice call support
 -   ✅ LED status indicators
 -   ✅ Data buffering during connection loss
@@ -48,9 +50,10 @@ In this mode tracker will send POST JSON to server:
 | ------------------------------------------------ | -------------------------------------------------- |
 | `APN,internet.mts.ru,mts,mts`                    | Configure mobile internet (APN)                    |
 | `SERVER,GT06,tracker.example.com:5023`           | Configure GT06 server or ~                         |
-| `SERVER,HTTP,https://example.com:8080/api/track` | Configure HTTP server                              |
+| `SERVER,HTTP,http://example.com:8080/api/track`  | Configure HTTP server (plain TCP, no TLS yet)     |
 | `WIFISERVER,location.example.com:80,/api/locate` | Configure WiFi Location Server (Optional)          |
 | `WIFIENABLE,1`                                   | Enable/Disable WiFi Location                       |
+| `ACCEL,1` / `ACCEL,0`                            | Enable/Disable accelerometer (off by default)      |
 | `ADDNUMBER,+1234567890`                          | Add phone number for restrict configuration access |
 | `DELNUMBER,+1234567890`                          | Remove allowed phone number                        |
 | `INTERVAL,10`                                    | Set data send interval (1-600 seconds)             |
@@ -90,7 +93,7 @@ In this mode tracker will send POST JSON to server:
 
 ### Hardware
 
--   **Main chip**: Quectel EC800N-CN (LA)
+-   **Target module**: Quectel **EC800N-CN (LE)** — full variant EC800MCNLER06A05M08
 -   **System**: MicroPython v.1.13.0 (mPY: 10245, Python v3.4.0, QPY v0006)
 -   **mPY RAM**: 512256 bytes
 -   **mPY ROM**: ~576KB in /usr/ plus ~100KB in /bak

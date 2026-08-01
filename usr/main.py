@@ -9,18 +9,22 @@ import modem
 import usocket
 from machine import Pin, UART
 from misc import Power
-
-
+from usr.mc3416 import MC3416
 class WatchDog:
-    def __init__(self, max_count=6):
+    def __init__(self, max_count=6, enabled=True):
         self.max_count = max_count
         self.count = max_count
         self.tid = None
+        self.enabled = enabled  # Disable for testing
 
     def feed(self):
+        if not self.enabled:
+            return
         self.count = self.max_count
 
     def _run(self):
+        if not self.enabled:
+            return
         while True:
             if self.count == 0:
                 print('Watchdog: triggering reset')
@@ -30,6 +34,9 @@ class WatchDog:
             utime.sleep(10)
 
     def start(self):
+        if not self.enabled:
+            print('Watchdog: disabled for testing')
+            return
         if not self.tid or not _thread.threadIsRunning(self.tid):
             _thread.stack_size(0x1000)
             self.tid = _thread.start_new_thread(self._run, ())
@@ -59,11 +66,8 @@ GNSS_PIN = Pin.GPIO10
 LED_RED = Pin.GPIO15
 LED_BLUE = Pin.GPIO16
 LED_YELLOW = Pin.GPIO17
-
-
 class GPSTracker:
 	"""Main GPS Tracker class"""
-
 	def __init__(self):
 		print('Initializing GPS Tracker...')
 		self.state_lock = _thread.allocate_lock()
@@ -71,8 +75,14 @@ class GPSTracker:
 		self.leds = Leds(red_pin=LED_RED, blue_pin=LED_BLUE, yellow_pin=LED_YELLOW)
 		self.leds.set_battery_status(Led.MODE_ON)
 		self.battery = BatteryMonitor()
-		self.gps = GPSController(GNSS_PORT, GNSS_PIN)
 		self.wifi_scanner = WiFiScanner()
+		device = Pin.GPIO9
+		self.accelerometer = MC3416(enable_pin=Pin(device), low_power=True)
+		self.accel_active = False
+		print('Accelerometer driver created')
+		self.gps = GPSController(GNSS_PORT, GNSS_PIN)
+		print('GPS initialized')
+
 		self.sms_handler = SMSHandler(self.config, self._config_callback)
 		self.data_buffer = DataBuffer()
 		self.protocol = None
@@ -87,11 +97,12 @@ class GPSTracker:
 		self.ntp_synced = False
 		self.last_rtc_sync = 0
 		self.wake_event = False
-		self.watchdog = WatchDog(12)
+		self.watchdog = WatchDog(12, enabled=False)
 		self.watchdog.start()
 		_thread.start_new_thread(self._main_loop, ())
 		_thread.start_new_thread(self._battery_monitor_loop, ())
 		print('GPS Tracker initialized')
+
 
 	def _init_protocol(self):
 		"""Initialize communication protocol"""
@@ -110,6 +121,33 @@ class GPSTracker:
 		else:
 			self.protocol = None
 			print('Server not configured')
+
+	def _update_accelerometer(self):
+		"""Apply accelerometer enable/disable state"""
+		try:
+			enabled = self.config.get('accelerometer_enabled', False)
+			if enabled and not self.accel_active:
+				if self.accelerometer.init():
+					self.accel_active = True
+					print('Accelerometer enabled')
+				else:
+					print('Accelerometer init failed')
+			elif not enabled and self.accel_active:
+				self.accelerometer.standby()
+				self.accel_active = False
+				print('Accelerometer disabled')
+		except Exception as e:
+			print('Accelerometer update error:', e)
+
+	def _check_accelerometer_movement(self):
+		"""Check accelerometer for movement if enabled"""
+		if not self.accel_active:
+			return False
+		try:
+			return self.accelerometer.detect_movement()
+		except Exception as e:
+			print('Accelerometer movement check error:', e)
+			return False
 
 	def _config_callback(self, event, *args):
 		"""Callback on configuration change"""
@@ -133,11 +171,11 @@ class GPSTracker:
 	def _init_network(self):
 		"""Initialize network connection"""
 		try:
-			checkNet.waitNetworkReady(30)
 			apn_config = self.config.get('apn')
 			if apn_config['name']:
 				dataCall.setApn(1, 0, apn_config['name'], apn_config['user'], apn_config['password'], 0)
 			dataCall.setCallback(self._datacall_callback)
+			checkNet.waitNetworkReady(30)
 			ret = dataCall.activate(1)
 			print('Network initialized, PDP active:', ret == 0)
 			if ret == 0 and not self.ntp_synced:
@@ -186,6 +224,7 @@ class GPSTracker:
 		while self.running:
 			try:
 				self.watchdog.feed()
+				self._update_accelerometer()
 				current_time = utime.time()
 				with self.state_lock:
 					if self.reconfig_needed:
@@ -201,6 +240,13 @@ class GPSTracker:
 							self.wake_event = False
 							print('[SLEEP] Wake event received')
 							self._exit_sleep_mode()
+							continue
+					# Check accelerometer for movement wake
+					if self.accel_active and self._check_accelerometer_movement():
+						print('[SLEEP] Accelerometer wake - movement detected')
+						self.wake_event = True
+						self._exit_sleep_mode()
+						continue
 					continue
 				if self._check_sleep_mode():
 					print('[SLEEP] Entering sleep (idle timeout)')
@@ -264,7 +310,13 @@ class GPSTracker:
 		lon = last_pos['longitude'] if last_pos and last_pos.get('valid') else None
 		try:
 			server = self.config.get('server')
-			host = server['host'] if server and server['host'] else 'localhost'
+			ws = self.config.get('wifi_server')
+			if ws and ws.get('host'):
+				host = ws['host']
+				port = ws.get('port', 5055)
+			else:
+				host = server['host'] if server and server['host'] else 'localhost'
+				port = 5055
 			imei = modem.getDevImei()
 			ts = int(utime.time() * 1000)
 			batt = data.get('battery', 0)
@@ -273,14 +325,18 @@ class GPSTracker:
 				params += '&lat={}&lon={}&hdop=99'.format(lat, lon)
 			for ap in wifi_networks:
 				params += '&wifi={},{}'.format(ap['mac'], ap['signal'])
-			request = 'GET /?' + params + ' HTTP/1.1\r\nHost: ' + host + ':5055\r\nConnection: close\r\n\r\n'
+			request = 'GET /?' + params + ' HTTP/1.1\r\nHost: ' + host + ':{}\r\nConnection: close\r\n\r\n'.format(port)
 			self.leds.set_network_status(Led.MODE_BLINK_CONNECT)
 			sock = usocket.socket(usocket.AF_INET, usocket.SOCK_STREAM)
 			sock.settimeout(10)
-			addr = usocket.getaddrinfo(host, 5055)[0][-1]
+			addr = usocket.getaddrinfo(host, port)[0][-1]
 			sock.connect(addr)
 			sock.send(request.encode())
-			while sock.recv(1024):
+			sock.settimeout(3)
+			try:
+				while sock.recv(1024):
+					pass
+			except Exception:
 				pass
 			sock.close()
 			with self.state_lock:
@@ -360,7 +416,8 @@ class GPSTracker:
 			print('Send buffered data error:', e)
 
 	def _detect_movement(self, location):
-		"""Detect movement based on location change"""
+		"""Detect movement based on location change or accelerometer"""
+		# GPS-based movement detection
 		if not self.last_location:
 			return True
 		# gnss.getSpeed() returns km/h — 1 km/h ≈ 0.28 m/s
@@ -370,6 +427,14 @@ class GPSTracker:
 		lon_diff = abs(location['longitude'] - self.last_location['longitude'])
 		if lat_diff > 0.0001 or lon_diff > 0.0001:
 			return True
+		# Accelerometer-based movement detection (fallback when GPS unavailable)
+		if self.accel_active:
+			try:
+				if self.accelerometer.detect_movement():
+					print('[LOC] Accelerometer movement detected')
+					return True
+			except Exception as e:
+				print('Accelerometer movement check error:', e)
 		return False
 
 	def _check_sleep_mode(self):
@@ -398,6 +463,13 @@ class GPSTracker:
 		self.leds.set_battery_status(Led.MODE_BLINK_SLOW)
 		if self.protocol:
 			self.protocol.disconnect()
+		# Keep accelerometer active for movement wake if enabled
+		if self.accel_active:
+			try:
+				self.accelerometer.wake()
+				print('[SLEEP] Accelerometer kept active for movement wake')
+			except Exception as e:
+				print('Accelerometer wake error:', e)
 		print('Sleep mode active')
 
 	def _exit_sleep_mode(self):
@@ -411,6 +483,12 @@ class GPSTracker:
 		self.gps.enable()
 		self.leds.set_gps_status(Led.MODE_BLINK_1HZ)
 		self._update_battery_led()
+		# Ensure accelerometer is active if enabled
+		if self.accel_active:
+			try:
+				self.accelerometer.wake()
+			except Exception as e:
+				print('Accelerometer wake error:', e)
 		if self.protocol:
 			self.protocol.connect()
 		print('Sleep mode exited')
@@ -458,6 +536,7 @@ class GPSTracker:
 			status += 'Sats: {}\n'.format(location.get('satellites', 0))
 		status += 'Buffer: {} records\n'.format(self.data_buffer.size())
 		status += 'Connected: {}\n'.format('Yes' if connected else 'No')
+		status += 'Accelerometer: {}\n'.format('Enabled' if self.accel_active else 'Disabled')
 		gc.collect()
 		status += 'Memory free: {} bytes'.format(gc.mem_free())
 		return status

@@ -29,8 +29,8 @@ class HTTPProtocol:
 		"""Send location data via HTTP POST"""
 		try:
 			self.leds.set_network_status(Led.MODE_BLINK_CONNECT)
-			json_data = {'imei': self.imei, 'timestamp': data['timestamp'], 'latitude': data['latitude'], 'longitude': data['longitude'], 'altitude': data['altitude'], 'speed': data['speed'], 'course': data['course'],
-                            'satellites': data['satellites'], 'battery': data['battery'], 'charging': data['charging'], 'source': data.get('source', 'gps'), 'accuracy': data.get('accuracy', 0), 'valid': data.get('valid', False)}
+			json_data = {'imei': self.imei, 'timestamp': data['timestamp'], 'latitude': data.get('latitude', 0), 'longitude': data.get('longitude', 0), 'altitude': data.get('altitude', 0.0), 'speed': data.get('speed', 0.0), 'course': data.get('course', 0.0),
+                            'satellites': data.get('satellites', 0), 'battery': data.get('battery', 0), 'charging': data.get('charging', False), 'source': data.get('source', 'gps'), 'accuracy': data.get('accuracy', 0), 'valid': data.get('valid', False)}
 			if 'wifi_networks' in data and len(data['wifi_networks']) > 0:
 				json_data['wifi_networks'] = data['wifi_networks']
 			json_str = ujson.dumps(json_data)

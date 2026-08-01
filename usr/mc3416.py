@@ -1,25 +1,8 @@
-"""QMA6100P 3-axis accelerometer driver for ZX908 (I2C0, addr 0x12).
-
-Hardware is QMA6100P-compatible (QST), NOT MC3416 as originally assumed.
-Chip marking "7A58 RP2", I2C addr 0x12, Chip ID 0x90.
-Class name kept as MC3416 for backward compatibility with tracker/mqtt.
-
-Calibration: offset + 3x3 affine matrix (handles zero-g bias,
-per-axis sensitivity, and cross-axis coupling).
-3-position calibration required: flat, side1, side2.
-"""
-
 from machine import I2C
 import utime
 import math
 import ujson
-
-try:
-    from modules.logging import getLogger
-except ImportError:
-    from usr.modules.logging import getLogger
-
-log = getLogger("accel")
+import sys
 
 # I2C address
 QMA6100P_ADDR = 0x12
@@ -48,10 +31,18 @@ SCALE = {
 CAL_FILE = '/usr/accel_cal.json'
 
 
+def _log_info(msg):
+    print('[MC3416] ' + msg)
+
+
+def _log_error(msg):
+    print('[MC3416] ERROR: ' + msg)
+
+
 class MC3416:
     """QMA6100P accelerometer driver (MC3416-compatible API)."""
 
-    def __init__(self, bus=I2C.I2C0):
+    def __init__(self, bus=I2C.I2C0, enable_pin=None, low_power=True):
         self._i2c = I2C(bus, I2C.STANDARD_MODE)
         self._range = RANGE_8G
         self._scale = SCALE[RANGE_8G]
@@ -63,15 +54,18 @@ class MC3416:
         self._mat = [1.0, 0.0, 0.0,
                      0.0, 1.0, 0.0,
                      0.0, 0.0, 1.0]
+        # Store enable_pin for compatibility (not used in QMA6100P I2C implementation)
+        self._enable_pin = enable_pin
+        self._low_power = low_power
 
     def init(self):
         """Initialize sensor. Returns True if QMA6100P found."""
         chip_id = self._read_reg(REG_CHIP_ID)
         if chip_id != 0x90:
-            log.error("QMA6100P not found (ID=0x%02X)" % chip_id)
+            _log_error("QMA6100P not found (ID=0x%02X)" % chip_id)
             return False
 
-        log.info("QMA6100P found (ID=0x%02X)" % chip_id)
+        _log_info("QMA6100P found (ID=0x%02X)" % chip_id)
 
         self._write_reg(REG_FSR_BW, self._range)
         utime.sleep_ms(5)
@@ -81,13 +75,13 @@ class MC3416:
 
         pm = self._read_reg(REG_PM)
         if pm & 0x80 == 0:
-            log.error("QMA6100P failed to activate (PM=0x%02X)" % pm)
+            _log_error("QMA6100P failed to activate (PM=0x%02X)" % pm)
             return False
 
         fsr = self._read_reg(REG_FSR_BW)
         self._range = fsr & 0x0C
         self._scale = SCALE.get(self._range, SCALE[RANGE_8G])
-        log.info("Range: 0x%02X, scale: %.3f mg/LSB" % (self._range, self._scale))
+        _log_info("Range: 0x%02X, scale: %.3f mg/LSB" % (self._range, self._scale))
 
         self._initialized = True
         self._load_calibration()
@@ -182,7 +176,7 @@ class MC3416:
 
         det = a*(e*k - f*h) - b*(d*k - f*g) + c*(d*h - e*g)
         if abs(det) < 0.001:
-            log.error("Calibration matrix singular!")
+            _log_error("Calibration matrix singular!")
             return None
 
         inv_det = 1.0 / det
@@ -203,13 +197,13 @@ class MC3416:
         ]
 
         self._save_calibration()
-        log.info("Cal offset: (%.1f, %.1f, %.1f)" % (ox, oy, oz))
-        log.info("Cal matrix diag: (%.3f, %.3f, %.3f)" % (self._mat[0], self._mat[4], self._mat[8]))
+        _log_info("Cal offset: (%.1f, %.1f, %.1f)" % (ox, oy, oz))
+        _log_info("Cal matrix diag: (%.3f, %.3f, %.3f)" % (self._mat[0], self._mat[4], self._mat[8]))
 
         # Verify
         x, y, z = self.read_accel()
         mag = math.sqrt(x*x + y*y + z*z)
-        log.info("Verify: (%.0f, %.0f, %.0f) |g|=%.0f" % (x, y, z, mag))
+        _log_info("Verify: (%.0f, %.0f, %.0f) |g|=%.0f" % (x, y, z, mag))
         return (x, y, z)
 
     def detect_movement(self):
@@ -241,20 +235,38 @@ class MC3416:
             f = open(CAL_FILE, 'r')
             cal = ujson.load(f)
             f.close()
+            if 'offset' not in cal or 'mat' not in cal:
+                cal = self._convert_legacy_cal(cal)
             self._offset = cal['offset']
             self._mat = cal['mat']
-            log.info("Loaded calibration (offset+matrix)")
+            _log_info("Loaded calibration (offset+matrix)")
         except:
-            log.info("No calibration, using defaults")
+            _log_info("No calibration, using defaults")
+
+    def _convert_legacy_cal(self, cal):
+        """Convert old schema (ox/oy/oz/m00..m22) to new (offset/mat)."""
+        offset = [cal.get('ox', 0.0), cal.get('oy', 0.0), cal.get('oz', 0.0)]
+        mat = []
+        for row in range(3):
+            for col in range(3):
+                mat.append(cal.get('m%d%d' % (row, col), 1.0 if row == col else 0.0))
+        new_cal = {'offset': offset, 'mat': mat}
+        try:
+            f = open(CAL_FILE, 'w')
+            ujson.dump(new_cal, f)
+            f.close()
+        except Exception as e:
+            _log_error("Cal migration save failed: %s" % e)
+        return new_cal
 
     def _save_calibration(self):
         try:
             f = open(CAL_FILE, 'w')
             ujson.dump({'offset': self._offset, 'mat': self._mat}, f)
             f.close()
-            log.info("Calibration saved")
+            _log_info("Calibration saved")
         except Exception as e:
-            log.error("Cal save failed: %s" % e)
+            _log_error("Cal save failed: %s" % e)
 
     def _read_reg(self, reg):
         r = bytearray([reg])

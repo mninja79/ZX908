@@ -93,11 +93,25 @@ class GT06Protocol:
 			self.serial_number = (self.serial_number + 1) % 0xFFFF
 			print('[GT06] Waiting for login response...')
 			response = self.socket.recv(128)
+			deadline = utime.time() + 5
+			while response and not response.endswith(b'\x0d\x0a') and utime.time() < deadline:
+				chunk = self.socket.recv(128)
+				if not chunk:
+					break
+				response += chunk
 			print('[GT06] Login response: {} bytes'.format(len(response) if response else 0))
-			if response and len(response) > 4:
+			if response:
+				print('[GT06] Login response hex: {}'.format(ubinascii.hexlify(response)))
+			ok = False
+			if response:
+				if b'\x05\x01' in response:
+					ok = True
+				elif len(response) >= 5 and response[0] == 0x78 and response[1] == 0x78 and response[3] == 0x01 and response[4] == 0x01:
+					ok = True
+			if ok:
 				print('[GT06] Login successful')
 				return True
-			print('[GT06] Login failed: no valid response')
+			print('[GT06] Login failed: invalid server response')
 			return False
 		except Exception as e:
 			print('[GT06] Login error:', e)
